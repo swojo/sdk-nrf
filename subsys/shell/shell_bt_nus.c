@@ -19,6 +19,7 @@ SHELL_DEFINE(shell_bt_nus, "bt_nus:~$ ", &shell_transport_bt_nus,
 	     SHELL_FLAG_OLF_CRLF);
 
 static K_SEM_DEFINE(shell_bt_nus_ready, 0, 1);
+K_MUTEX_DEFINE(rx_ringbuf_mutex);
 
 static bool is_init;
 
@@ -26,7 +27,9 @@ static void rx_callback(struct bt_conn *conn, const uint8_t *const data, uint16_
 {
 	const struct shell_bt_nus *bt_nus =
 		(const struct shell_bt_nus *)shell_transport_bt_nus.ctx;
+	k_mutex_lock(&rx_ringbuf_mutex, K_FOREVER);
 	uint32_t done = ring_buf_put(bt_nus->rx_ringbuf, data, len);
+	k_mutex_unlock(&rx_ringbuf_mutex);
 
 	LOG_DBG("Received %d bytes.", len);
 	if (done < len) {
@@ -41,19 +44,22 @@ static void tx_try(const struct shell_bt_nus *bt_nus)
 {
 	uint8_t *buf;
 	uint32_t size;
-	uint32_t req_len = bt_nus_get_mtu(bt_nus->ctrl_blk->conn);
+//	uint32_t req_len = bt_nus_get_mtu(bt_nus->ctrl_blk->conn);
+	uint32_t req_len = 128;
 
 	size = ring_buf_get_claim(bt_nus->tx_ringbuf, &buf, req_len);
 
 	if (size) {
 		int err, err2;
 
-		err = bt_nus_send(bt_nus->ctrl_blk->conn, buf, size);
+		err = bt_nus_send(NULL, buf, size);
 		err2 = ring_buf_get_finish(bt_nus->tx_ringbuf, size);
 		__ASSERT_NO_MSG(err2 == 0);
 
 		if (err == 0) {
 			LOG_DBG("Sent %d bytes", size);
+		} else if (err == -ENOTCONN) {
+			LOG_INF("No connection");
 		} else {
 			LOG_INF("Failed to send %d bytes (%d error)",
 								size, err);
@@ -111,7 +117,6 @@ static int enable(const struct shell_transport *transport, bool blocking_tx)
 
 	if (blocking_tx) {
 		/* transport cannot work in blocking mode, shut down */
-		bt_nus->ctrl_blk->conn = NULL;
 		return -ENOTSUP;
 	}
 
@@ -127,7 +132,9 @@ static int read(const struct shell_transport *transport,
 	const struct shell_bt_nus *bt_nus =
 			(struct shell_bt_nus *)transport->ctx;
 
+	k_mutex_lock(&rx_ringbuf_mutex, K_FOREVER);
 	*cnt = ring_buf_get(bt_nus->rx_ringbuf, data, length);
+	k_mutex_unlock(&rx_ringbuf_mutex);
 
 	return 0;
 }
@@ -138,10 +145,6 @@ static int write(const struct shell_transport *transport,
 	const struct shell_bt_nus *bt_nus =
 			(struct shell_bt_nus *)transport->ctx;
 
-	if (bt_nus->ctrl_blk->conn == NULL) {
-		*cnt = length;
-		return 0;
-	}
 
 	*cnt = ring_buf_put(bt_nus->tx_ringbuf, data, length);
 	LOG_DBG("Write req:%d accept:%d", length, *cnt);
@@ -158,7 +161,6 @@ void shell_bt_nus_disable(void)
 	const struct shell_bt_nus *bt_nus =
 			(const struct shell_bt_nus *)shell_transport_bt_nus.ctx;
 
-	bt_nus->ctrl_blk->conn = NULL;
 	k_sem_give(&shell_bt_nus_ready);
 }
 
@@ -172,9 +174,6 @@ void shell_bt_nus_enable(struct bt_conn *conn)
 		(CONFIG_SHELL_BT_NUS_INIT_LOG_LEVEL > LOG_LEVEL_DBG) ?
 		CONFIG_LOG_MAX_LEVEL : CONFIG_SHELL_BT_NUS_INIT_LOG_LEVEL;
 
-	bt_nus->ctrl_blk->conn = conn;
-
-	k_sem_reset(&shell_bt_nus_ready);
 
 	if (!is_init) {
 		struct shell_backend_config_flags cfg_flags = SHELL_DEFAULT_BACKEND_CONFIG_FLAGS;
@@ -201,6 +200,8 @@ int shell_bt_nus_init(void)
 		.sent = tx_callback,
 		.send_enabled = send_enabled_callback
 	};
+
+	k_sem_reset(&shell_bt_nus_ready);
 
 	return bt_nus_init(&callbacks);
 }
