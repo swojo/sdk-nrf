@@ -58,8 +58,6 @@ static void tx_try(const struct shell_bt_nus *bt_nus)
 
 		if (err == 0) {
 			LOG_DBG("Sent %d bytes", size);
-		} else if (err == -ENOTCONN) {
-			LOG_INF("No connection");
 		} else {
 			LOG_INF("Failed to send %d bytes (%d error)",
 								size, err);
