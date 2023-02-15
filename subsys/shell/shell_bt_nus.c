@@ -22,6 +22,7 @@ static K_SEM_DEFINE(shell_bt_nus_ready, 0, 1);
 K_MUTEX_DEFINE(rx_ringbuf_mutex);
 
 static bool is_init;
+static atomic_t send_enabled = ATOMIC_INIT(false);
 
 static void rx_callback(struct bt_conn *conn, const uint8_t *const data, uint16_t len)
 {
@@ -83,8 +84,12 @@ static void tx_callback(struct bt_conn *conn)
 static void send_enabled_callback(enum bt_nus_send_status status)
 {
 	if (status == BT_NUS_SEND_STATUS_ENABLED) {
-		LOG_DBG("NUS notification has been enabled");
+		LOG_INF("NUS notification has been enabled");
 		k_sem_give(&shell_bt_nus_ready);
+		atomic_set(&send_enabled, true);
+	} else {
+		LOG_INF("NUS notification has been disabled");
+		atomic_set(&send_enabled, false);
 	}
 }
 
@@ -143,6 +148,10 @@ static int write(const struct shell_transport *transport,
 	const struct shell_bt_nus *bt_nus =
 			(struct shell_bt_nus *)transport->ctx;
 
+	if (!atomic_get(&send_enabled)) {
+		*cnt = length;
+		return 0;
+	}
 
 	*cnt = ring_buf_put(bt_nus->tx_ringbuf, data, length);
 	LOG_DBG("Write req:%d accept:%d", length, *cnt);
