@@ -111,3 +111,9 @@ int bt_nus_send(struct bt_conn *conn, const uint8_t *data, uint16_t len)
 		return -EINVAL;
 	}
 }
+
+bool bt_nus_is_subscribed(struct bt_conn *conn) 
+{
+	const struct bt_gatt_attr *attr = &nus_svc.attrs[2];
+	return bt_gatt_is_subscribed(conn, attr, BT_GATT_CCC_NOTIFY);
+}

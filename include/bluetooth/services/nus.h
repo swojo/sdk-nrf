@@ -123,8 +123,17 @@ static inline uint32_t bt_nus_get_mtu(struct bt_conn *conn)
 {
 	/* According to 3.4.7.1 Handle Value Notification off the ATT protocol.
 	 * Maximum supported notification is ATT_MTU - 3 */
-	return bt_gatt_get_mtu(conn) - 3;
+	return MAX(0, bt_gatt_get_mtu(conn) - 3);
 }
+
+/**@brief Check if connection is subcribed to NUS notifications
+ *
+ * @param[in] conn Pointer to connection Object.
+ *
+ * @return true		if conn subscribed to NUS service notification
+ *			false	Otherwise
+ */
+bool bt_nus_is_subscribed(struct bt_conn *conn);
 
 #ifdef __cplusplus
 }
