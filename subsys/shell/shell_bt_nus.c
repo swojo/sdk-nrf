@@ -41,19 +41,39 @@ static void rx_callback(struct bt_conn *conn, const uint8_t *const data, uint16_
 				  bt_nus->ctrl_blk->context);
 }
 
+static void get_min_subscribed_mtu(struct bt_conn *conn, void* data) 
+{
+	if (!bt_nus_is_subscribed(conn)) { return; }
+
+	uint32_t *min_mtu = (uint32_t*)data;
+	uint32_t mtu = bt_nus_get_mtu(conn);
+	if (0 != *min_mtu) {
+		*min_mtu = MIN(mtu, *min_mtu);
+	} else {
+		*min_mtu = mtu;
+	}
+}
+
 static void tx_try(const struct shell_bt_nus *bt_nus)
 {
 	uint8_t *buf;
-	uint32_t size;
-//	uint32_t req_len = bt_nus_get_mtu(bt_nus->ctrl_blk->conn);
-	uint32_t req_len = 128;
+	uint32_t size = 0;
+	uint32_t req_len = 0; // O in case of no connection
+
+	struct bt_conn* conn = bt_nus->ctrl_blk->conn;
+
+	if (conn) {
+		req_len = bt_nus_get_mtu(conn);
+	} else {
+		bt_conn_foreach(BT_CONN_TYPE_ALL, get_min_subscribed_mtu, (void*)&req_len);
+	}
 
 	size = ring_buf_get_claim(bt_nus->tx_ringbuf, &buf, req_len);
 
 	if (size) {
 		int err, err2;
 
-		err = bt_nus_send(NULL, buf, size);
+		err = bt_nus_send(conn, buf, size);
 		err2 = ring_buf_get_finish(bt_nus->tx_ringbuf, size);
 		__ASSERT_NO_MSG(err2 == 0);
 
@@ -84,11 +104,11 @@ static void tx_callback(struct bt_conn *conn)
 static void send_enabled_callback(enum bt_nus_send_status status)
 {
 	if (status == BT_NUS_SEND_STATUS_ENABLED) {
-		LOG_INF("NUS notification has been enabled");
+		LOG_DBG("NUS notification has been enabled");
 		k_sem_give(&shell_bt_nus_ready);
 		atomic_set(&send_enabled, true);
 	} else {
-		LOG_INF("NUS notification has been disabled");
+		LOG_DBG("NUS notification has been disabled");
 		atomic_set(&send_enabled, false);
 	}
 }
@@ -120,6 +140,7 @@ static int enable(const struct shell_transport *transport, bool blocking_tx)
 
 	if (blocking_tx) {
 		/* transport cannot work in blocking mode, shut down */
+		bt_nus->ctrl_blk->conn = NULL;
 		return -ENOTSUP;
 	}
 
@@ -168,6 +189,7 @@ void shell_bt_nus_disable(void)
 	const struct shell_bt_nus *bt_nus =
 			(const struct shell_bt_nus *)shell_transport_bt_nus.ctx;
 
+	bt_nus->ctrl_blk->conn = NULL;
 	k_sem_give(&shell_bt_nus_ready);
 }
 
@@ -181,6 +203,7 @@ void shell_bt_nus_enable(struct bt_conn *conn)
 		(CONFIG_SHELL_BT_NUS_INIT_LOG_LEVEL > LOG_LEVEL_DBG) ?
 		CONFIG_LOG_MAX_LEVEL : CONFIG_SHELL_BT_NUS_INIT_LOG_LEVEL;
 
+	bt_nus->ctrl_blk->conn = conn;
 
 	if (!is_init) {
 		struct shell_backend_config_flags cfg_flags = SHELL_DEFAULT_BACKEND_CONFIG_FLAGS;
