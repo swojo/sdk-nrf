@@ -18,7 +18,6 @@ SHELL_DEFINE(shell_bt_nus, "bt_nus:~$ ", &shell_transport_bt_nus,
 	     CONFIG_SHELL_BT_NUS_LOG_MESSAGE_QUEUE_TIMEOUT,
 	     SHELL_FLAG_OLF_CRLF);
 
-static K_SEM_DEFINE(shell_bt_nus_ready, 0, 1);
 K_MUTEX_DEFINE(rx_ringbuf_mutex);
 
 static bool is_init;
@@ -105,7 +104,6 @@ static void send_enabled_callback(enum bt_nus_send_status status)
 {
 	if (status == BT_NUS_SEND_STATUS_ENABLED) {
 		LOG_DBG("NUS notification has been enabled");
-		k_sem_give(&shell_bt_nus_ready);
 		atomic_set(&send_enabled, true);
 	} else {
 		LOG_DBG("NUS notification has been disabled");
@@ -145,7 +143,6 @@ static int enable(const struct shell_transport *transport, bool blocking_tx)
 	}
 
 	LOG_DBG("Waiting for the NUS notification to be enabled");
-	k_sem_take(&shell_bt_nus_ready, K_FOREVER);
 
 	return 0;
 }
@@ -190,7 +187,7 @@ void shell_bt_nus_disable(void)
 			(const struct shell_bt_nus *)shell_transport_bt_nus.ctx;
 
 	bt_nus->ctrl_blk->conn = NULL;
-	k_sem_give(&shell_bt_nus_ready);
+	atomic_set(&send_enabled, false);
 }
 
 void shell_bt_nus_enable(struct bt_conn *conn)
@@ -203,6 +200,7 @@ void shell_bt_nus_enable(struct bt_conn *conn)
 		(CONFIG_SHELL_BT_NUS_INIT_LOG_LEVEL > LOG_LEVEL_DBG) ?
 		CONFIG_LOG_MAX_LEVEL : CONFIG_SHELL_BT_NUS_INIT_LOG_LEVEL;
 
+	atomic_set(&send_enabled, false);
 	bt_nus->ctrl_blk->conn = conn;
 
 	if (!is_init) {
@@ -231,7 +229,6 @@ int shell_bt_nus_init(void)
 		.send_enabled = send_enabled_callback
 	};
 
-	k_sem_reset(&shell_bt_nus_ready);
 
 	return bt_nus_init(&callbacks);
 }
